@@ -399,11 +399,34 @@ def _readable_geek_detail(info: Any) -> bool:
 
 _SEND_MESSAGE_ACTION_JS = """
 const escaped = escapeHtml(args.content);
-if (editor.disabled || editor.conversationLoading$) {
-	return {ok: false, error: 'editor is disabled or conversation is loading', log};
+if (editor.conversation$?.friendId !== args.targetFriendId || editor.conversationLoading$ !== false) {
+	return {ok: false, error: 'target conversation is not ready', log};
 }
+const uniqueId = editor.uniqueId;
 editor.draft[editor.uniqueId] = args.content;
 input.innerHTML = escaped;
+if (typeof editor.callback !== 'function') {
+	return {ok: false, error: 'editor input callback is unavailable', log};
+}
+try {
+	editor.callback();
+} catch (e) {
+	return {ok: false, error: 'editor input callback failed: ' + e.message, log};
+}
+const readyDeadline = Date.now() + 3000;
+while (editor.disabled !== false && Date.now() < readyDeadline) {
+	if (editor.conversation$?.friendId !== args.targetFriendId || editor.conversationLoading$ !== false) {
+		return {ok: false, error: 'target conversation changed while preparing reply', log};
+	}
+	await sleep(100);
+}
+if (editor.disabled !== false) {
+	return {ok: false, error: 'editor did not become ready within 3000ms', log};
+}
+if (editor.conversation$?.friendId !== args.targetFriendId || editor.conversationLoading$ !== false ||
+	editor.uniqueId !== uniqueId || input.textContent !== args.content || editor.draft[uniqueId] !== args.content) {
+	return {ok: false, error: 'target conversation or reply content changed before send', log};
+}
 log.push('editbox html set, calling sendText');
 try {
 	const ret = editor.sendText();
